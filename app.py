@@ -3,20 +3,19 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
 from celery import Celery
-import requests
 
-# Initialize Flask App
+# Import models here (but don't bind db yet)
+from models import db, User, Proxy
+
+# Initialize Flask app
 app = Flask(__name__)
 app.config.from_object('config')
 
-# Initialize database
-db = SQLAlchemy(app)  # Initialize & bind immediately
+# Initialize extensions
+db.init_app(app)  # Now bind db to app
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
-
-# Import models AFTER initializing db
-from models import User, Proxy
 
 # Celery Configuration
 def make_celery(app):
