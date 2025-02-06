@@ -10,33 +10,28 @@ import os
 app = Flask(__name__)
 app.config.from_object('config')
 
-# Database Setup
-db = SQLAlchemy()
-
-# Initialize Extensions
+# Initialize Database
+db = SQLAlchemy()  # ✅ Define instance but do NOT bind to app yet
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# Initialize Database with the Flask App
-db.init_app(app)
+# Bind db instance to Flask app
+db.init_app(app)  # ✅ Ensures SQLAlchemy is properly registered
 
 # Import Models AFTER db is initialized
-from models import User, Proxy
+with app.app_context():
+    from models import User, Proxy
+    db.create_all()  # ✅ Ensures tables exist at startup
 
 # Celery Configuration
 celery = Celery(app.name, broker=app.config.get('CELERY_BROKER_URL', 'redis://localhost:6379/0'))
 celery.conf.update(app.config)
 
-# Ensure database is created on startup
-with app.app_context():
-    db.create_all()
-
 @login_manager.user_loader
 def load_user(user_id):
-    return db.session.get(User, int(user_id))  # ✅ FIXED DEPRECATION WARNING
+    return db.session.get(User, int(user_id))  # ✅ Fixed deprecation warning
 
-# Route: User Registration
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
@@ -54,7 +49,6 @@ def register():
     
     return render_template('register.html')
 
-# Route: User Login
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
