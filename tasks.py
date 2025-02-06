@@ -1,53 +1,44 @@
 from celery import Celery
 import requests
 import re
-import os
 from app import db
 from models import Proxy
 
-# Initialize Celery
 celery = Celery('tasks', broker='redis://localhost:6379/0')
 
-# Path to the proxy sources file
-PROXY_SOURCES_FILE = os.path.join(os.path.dirname(__file__), 'proxy_sources.txt')
-
-# Function to load proxy sources from a file
-def load_proxy_sources():
-    """Loads proxy source URLs from the proxy_sources.txt file."""
-    if not os.path.exists(PROXY_SOURCES_FILE):
-        return []
-    with open(PROXY_SOURCES_FILE, 'r') as f:
-        return [line.strip() for line in f.readlines() if line.strip()]
-
-# Function to fetch proxies from a URL
-def fetch_proxies(url):
-    """Fetches proxies from a given URL, extracting valid IP:PORT pairs."""
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()  # Raise an error for failed requests
-        proxies = re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}:\d+\b', response.text)  # Extract IP:PORT format
-        return proxies
-    except requests.RequestException:
-        return []
+PROXY_SOURCES = [
+    "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies.txt",
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
+    "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt",
+    "https://spys.me/socks.txt"
+]
 
 @celery.task
 def scrape_proxies_task():
-    """Scrapes proxies from predefined sources and stores them in the database."""
-    proxy_sources = load_proxy_sources()  # Load sources dynamically
-    scraped_proxies = set()  # Use a set to avoid duplicates
+    """Fetch and store proxies from sources"""
+    proxies_found = []
 
-    for url in proxy_sources:
-        proxies = fetch_proxies(url)
-        scraped_proxies.update(proxies)
+    for url in PROXY_SOURCES:
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                raw_proxies = re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}:\d+\b", response.text)
+                for proxy in raw_proxies:
+                    ip, port = proxy.split(':')
+                    proxies_found.append((ip, port))
+        except requests.RequestException:
+            print(f"Failed to fetch from {url}")
 
-    with db.session.begin():  # Ensure session is handled correctly
-        for proxy in scraped_proxies:
-            ip, port = proxy.split(':')
-            if not Proxy.query.filter_by(ip=ip, port=int(port)).first():  # Avoid duplicate entries
+    # Store in database
+    with db.session.begin():
+        for ip, port in proxies_found:
+            existing_proxy = db.session.query(Proxy).filter_by(ip=ip, port=port).first()
+            if not existing_proxy:  # Avoid duplicates
                 new_proxy = Proxy(ip=ip, port=int(port))
                 db.session.add(new_proxy)
 
-    return f'Scraped {len(scraped_proxies)} proxies and added to database.'
+    db.session.commit()
+    return f"Scraped and stored {len(proxies_found)} proxies."
 
 @celery.task
 def test_proxies_task():
