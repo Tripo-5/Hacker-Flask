@@ -3,7 +3,6 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
 from celery import Celery
-from models import User, Proxy
 
 # Initialize Flask extensions
 db = SQLAlchemy()
@@ -16,7 +15,6 @@ def create_app():
     app.config.from_object('config')
 
     db.init_app(app)
-    bcrypt.init_app(app)
     login_manager.init_app(app)
 
     with app.app_context():
@@ -29,10 +27,9 @@ app = create_app()
 @login_manager.user_loader
 def load_user(user_id):
     """ Load user session """
-    with app.app_context():
-        return db.session.get(User, int(user_id))
+    return db.session.get(User, int(user_id))
 
-# Import models AFTER initializing db
+# Import models AFTER initializing db to prevent circular imports
 from models import User, Proxy
 
 # ✅ **Routes**
@@ -43,18 +40,18 @@ def dashboard():
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    """ User Registration """
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
 
-        with app.app_context():  
-            if db.session.query(User).filter_by(username=username).first():
-                return "User already exists!"
+        if User.query.filter_by(username=username).first():
+            return "User already exists!"
 
-            hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
-            new_user = User(username=username, password=hashed_password)
-            db.session.add(new_user)
-            db.session.commit()
+        hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
+        new_user = User(username=username, password=hashed_password)
+        db.session.add(new_user)
+        db.session.commit()
 
         return redirect(url_for('login'))
 
@@ -62,12 +59,11 @@ def register():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    """ User Login """
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-
-        with app.app_context():
-            user = db.session.query(User).filter_by(username=username).first()
+        user = User.query.filter_by(username=username).first()
 
         if user and bcrypt.check_password_hash(user.password, password):
             login_user(user)
@@ -78,6 +74,7 @@ def login():
 @app.route('/logout')
 @login_required
 def logout():
+    """ Logout User """
     logout_user()
     return redirect(url_for('login'))
 
@@ -91,24 +88,28 @@ def recon_management():
 def scrape_proxies():
     """ Start proxy scraping task """
     from tasks import scrape_proxies_task  # Import inside route to avoid circular import
-    scrape_proxies_task.delay()
+    with app.app_context():  # Ensure Celery tasks have Flask context
+        scrape_proxies_task.delay()
     return jsonify({'message': 'Scraping started'})
-
 
 @app.route('/test_proxies', methods=['POST'])
 @login_required
 def test_proxies():
+    """ Start proxy testing task """
     from tasks import test_proxies_task  
-    test_proxies_task.delay()
+    with app.app_context():
+        test_proxies_task.delay()
     return jsonify({'message': 'Testing started'})
 
 @app.route('/get_proxies')
 @login_required
 def get_proxies():
-    with app.app_context():
-        proxies = db.session.query(Proxy).limit(30).all()
-    
-    return jsonify([{'ip': p.ip, 'port': p.port, 'connectivity': p.connectivity, 'response_time': p.response_time, 'location': p.location} for p in proxies])
+    """ Retrieve proxies from database """
+    proxies = Proxy.query.limit(30).all()
+    return jsonify([
+        {'ip': p.ip, 'port': p.port, 'connectivity': p.connectivity, 'response_time': p.response_time, 'location': p.location}
+        for p in proxies
+    ])
 
 # Start Flask App
 if __name__ == '__main__':
