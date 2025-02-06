@@ -1,23 +1,21 @@
 from celery import Celery
-from flask_sqlalchemy import SQLAlchemy
 from models import Proxy  # Import only the necessary models
-
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
 from config import CELERY_BROKER_URL
 
 celery = Celery(__name__, broker=CELERY_BROKER_URL)
 
-from celery import Celery
 import requests
 import random
 import os
 from app import db  # Lazy import to avoid circular dependency
-from models import Proxy  # Ensure correct import
 
 @celery.task
 def scrape_proxies_task():
     """
     Scrapes proxies from a list of URLs in 'proxy_sources.txt',
-    extracts only valid IP:PORT format, and stores them in the database.
+    extracts valid IP:PORT proxies, and stores them in the database.
     """
     file_path = os.path.join(os.path.dirname(__file__), 'proxy_sources.txt')
 
@@ -48,7 +46,15 @@ def scrape_proxies_task():
         try:
             response = requests.get(url, timeout=10)
             if response.status_code == 200:
-                matches = proxy_regex.findall(response.text)  # Extract valid IP:PORT
+                if "text/html" in response.headers["Content-Type"]:
+                    # If the response is HTML, use BeautifulSoup to extract IPs
+                    soup = BeautifulSoup(response.text, "html.parser")
+                    text_content = soup.get_text()
+                    matches = proxy_regex.findall(text_content)
+                else:
+                    # Otherwise, parse the response as plain text
+                    matches = proxy_regex.findall(response.text)
+
                 for match in matches:
                     scraped_proxies.add(match)
                 print(f"✅ Found {len(matches)} proxies from {url}")
@@ -63,6 +69,7 @@ def scrape_proxies_task():
         return "No valid proxies found."
 
     # Store scraped proxies in database
+    app = create_app()  # Ensure correct app context
     with app.app_context():
         for ip, port in scraped_proxies:
             if not Proxy.query.filter_by(ip=ip, port=int(port)).first():  # Avoid duplicates
@@ -73,6 +80,27 @@ def scrape_proxies_task():
 
     print(f"✅ Successfully scraped and saved {len(scraped_proxies)} proxies.")
     return f"Successfully scraped and saved {len(scraped_proxies)} proxies."
+🔹 Fix: Ensure Flask App Context is Initialized
+In app.py, ensure you have an app factory function:
+
+python
+Copy
+Edit
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+
+db = SQLAlchemy()
+
+def create_app():
+    app = Flask(__name__)
+    app.config.from_object('config')
+
+    db.init_app(app)
+
+    with app.app_context():
+        db.create_all()  # Ensure database is initialized
+
+    return app
 @celery.task
 def test_proxies_task():
     import requests
