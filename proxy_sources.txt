@@ -1,18 +1,26 @@
+# Define the updated proxy sources with correct raw URLs where applicable
+updated_proxy_sources = """\
 https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies.txt
-https://github.com/TheSpeedX/PROXY-List/blob/master/socks5.txt
-https://sockslist.us/
-https://github.com/proxifly/free-proxy-list
+https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt
+https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt
+https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt
+https://raw.githubusercontent.com/fyvri/fresh-proxy-list/storage/classic/socks5.txt
+https://raw.githubusercontent.com/fyvri/fresh-proxy-list/storage/classic/socks4.txt
+https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt
+https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt
 https://www.socks-proxy.net/
 https://proxyscrape.com/free-proxy-list
-https://github.com/vakhov/fresh-proxy-list
 https://hide.mn/en/proxy-list/
 https://spys.me/socks.txt
-https://github.com/vakhov/fresh-proxy-list/blob/master/socks5.txt
-https://github.com/proxifly/free-proxy-list/blob/main/proxies/protocols/socks5/data.txt
-https://raw.githubusercontent.com/fyvri/fresh-proxy-list/archive/storage/classic/socks5.txt
-https://raw.githubusercontent.com/fyvri/fresh-proxy-list/archive/storage/classic/socks4.txt
-https://github.com/Loclki/PROXY-List/blob/main/socks5.txt
-https://github.com/r00tee/Proxy-List/blob/main/Socks5.txt
-https://github.com/r00tee/Proxy-List/blob/main/Socks4.txt
-https://github.com/monosans/proxy-list/blob/main/proxies/socks5.txt
-https://github.com/hookzof/socks5_list/blob/master/proxy.txt
+"""
+
+# Write the updated proxy sources back to the proxy_sources.txt file
+with open(proxy_sources_path, "w") as f:
+    f.write(updated_proxy_sources)
+
+# Confirm the update
+with open(proxy_sources_path, "r") as f:
+    updated_content = f.read()
+
+updated_content
+
