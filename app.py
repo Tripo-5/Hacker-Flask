@@ -29,9 +29,6 @@ from models import User, Proxy  # Make sure models.py is structured correctly
 # Now, bind db to the app
 db.init_app(app)
 
-# Import Celery tasks AFTER Celery is initialized
-from tasks import scrape_proxies_task, test_proxies_task
-
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
@@ -71,14 +68,17 @@ def recon_management():
 @app.route('/scrape_proxies', methods=['POST'])
 @login_required
 def scrape_proxies():
+    from tasks import scrape_proxies_task  # Lazy import
     scrape_proxies_task.delay()
     return jsonify({'message': 'Scraping started'})
 
 @app.route('/test_proxies', methods=['POST'])
 @login_required
 def test_proxies():
+    from tasks import test_proxies_task  # Lazy import
     test_proxies_task.delay()
     return jsonify({'message': 'Testing started'})
+
 
 @app.route('/get_proxies')
 @login_required
