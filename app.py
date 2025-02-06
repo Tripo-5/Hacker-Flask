@@ -6,7 +6,10 @@ from celery import Celery
 
 # Import models here (but don't bind db yet)
 from models import db, User, Proxy
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
 
+db = SQLAlchemy()
 # Initialize Flask app
 app = Flask(__name__)
 app.config.from_object('config')
@@ -16,6 +19,17 @@ db.init_app(app)  # Now bind db to app
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
+
+def create_app():
+    app = Flask(__name__)
+    app.config.from_object('config')
+
+    db.init_app(app)
+
+    with app.app_context():
+        db.create_all()  # Ensure database is initialized
+
+    return app
 
 # Celery Configuration
 def make_celery(app):
