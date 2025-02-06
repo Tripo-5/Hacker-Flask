@@ -25,10 +25,25 @@ def create_app():
 
     return app
 
-# Initialize Flask App and Celery
+# Create the app instance
 app = create_app()
-celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
-celery.conf.update(app.config)
+
+# Celery Setup
+def make_celery(app):
+    """Initialize Celery with Flask app context"""
+    celery = Celery(app.import_name, broker=app.config['CELERY_BROKER_URL'])
+    celery.conf.update(app.config)
+
+    class ContextTask(celery.Task):
+        """Ensure tasks run inside Flask context"""
+        def __call__(self, *args, **kwargs):
+            with app.app_context():
+                return self.run(*args, **kwargs)
+
+    celery.Task = ContextTask
+    return celery
+
+celery = make_celery(app)
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -36,32 +51,9 @@ def load_user(user_id):
     with app.app_context():
         return db.session.get(User, int(user_id))
 
-# Route: User Registration
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        
-        with app.app_context():
-            if db.session.query(User).filter_by(username=username).first():
-                return "User already exists!"
-
-            hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
-            new_user = User(username=username, password=hashed_password)
-            db.session.add(new_user)
-            db.session.commit()
-        
-        return redirect(url_for('login'))
-    
-    return render_template('register.html')
-
-# Route: Scrape Proxies
-@app.route('/scrape_proxies', methods=['POST'])
-@login_required
-def scrape_proxies():
-    scrape_proxies_task.delay()
-    return jsonify({'message': 'Scraping started'})
+@app.route('/')
+def home():
+    return "Flask App is Running!"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
