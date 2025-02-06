@@ -6,20 +6,61 @@ from config import CELERY_BROKER_URL
 
 celery = Celery(__name__, broker=CELERY_BROKER_URL)
 
+from celery import Celery
+import requests
+import random
+import os
+from app import db  # Lazy import to avoid circular dependency
+from models import Proxy  # Ensure correct import
+
 @celery.task
 def scrape_proxies_task():
-    import random
-    from app import db  # Lazy import to avoid circular dependency
+    """
+    Scrapes proxies from a list of URLs specified in 'proxy_sources.txt'.
+    Saves proxies to the database.
+    """
+    file_path = os.path.join(os.path.dirname(__file__), 'proxy_sources.txt')
 
-    urls = ['https://example.com/proxies']  # Replace with real sources
-    scraped_proxies = [(f'192.168.1.{random.randint(1, 255)}', random.randint(1000, 9999)) for _ in range(50)]
+    # Check if the file exists
+    if not os.path.exists(file_path):
+        return "Error: 'proxy_sources.txt' not found in project directory."
 
+    # Read URLs from the file
+    try:
+        with open(file_path, 'r') as file:
+            urls = [line.strip() for line in file.readlines() if line.strip()]
+    except Exception as e:
+        return f"Error reading 'proxy_sources.txt': {str(e)}"
+
+    if not urls:
+        return "Error: No URLs found in 'proxy_sources.txt'."
+
+    scraped_proxies = []
+
+    for url in urls:
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                lines = response.text.splitlines()
+                for line in lines:
+                    parts = line.strip().split(':')
+                    if len(parts) == 2:  # Ensure it's in IP:PORT format
+                        scraped_proxies.append((parts[0], parts[1]))
+        except Exception as e:
+            print(f"Failed to fetch from {url}: {e}")
+
+    # If no proxies were scraped, return an error
+    if not scraped_proxies:
+        return "No valid proxies found from the sources."
+
+    # Store scraped proxies in the database
     for ip, port in scraped_proxies:
-        proxy = Proxy(ip=ip, port=port)
+        proxy = Proxy(ip=ip, port=int(port))
         db.session.add(proxy)
 
     db.session.commit()
-    return 'Scraping complete'
+    return f'Successfully scraped {len(scraped_proxies)} proxies.'
+
 
 @celery.task
 def test_proxies_task():
