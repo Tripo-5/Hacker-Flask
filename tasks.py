@@ -16,8 +16,8 @@ from models import Proxy  # Ensure correct import
 @celery.task
 def scrape_proxies_task():
     """
-    Scrapes proxies from a list of URLs specified in 'proxy_sources.txt'.
-    Saves proxies to the database.
+    Scrapes proxies from a list of URLs in 'proxy_sources.txt',
+    extracts only valid IP:PORT format, and stores them in the database.
     """
     file_path = os.path.join(os.path.dirname(__file__), 'proxy_sources.txt')
 
@@ -35,32 +35,37 @@ def scrape_proxies_task():
     if not urls:
         return "Error: No URLs found in 'proxy_sources.txt'."
 
-    scraped_proxies = []
+    # Regular expression to match valid IP:PORT format
+    proxy_regex = re.compile(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{2,5})")
+
+    scraped_proxies = set()  # Using a set to avoid duplicates
 
     for url in urls:
         try:
             response = requests.get(url, timeout=10)
             if response.status_code == 200:
-                lines = response.text.splitlines()
-                for line in lines:
-                    parts = line.strip().split(':')
-                    if len(parts) == 2:  # Ensure it's in IP:PORT format
-                        scraped_proxies.append((parts[0], parts[1]))
+                matches = proxy_regex.findall(response.text)  # Extract only IP:PORT
+                for match in matches:
+                    scraped_proxies.add(match)  # Store as tuple (IP, PORT)
+            else:
+                print(f"⚠️ Skipping {url}: Status {response.status_code}")
         except Exception as e:
-            print(f"Failed to fetch from {url}: {e}")
+            print(f"⚠️ Failed to fetch {url}: {e}")
 
     # If no proxies were scraped, return an error
     if not scraped_proxies:
         return "No valid proxies found from the sources."
 
-    # Store scraped proxies in the database
-    for ip, port in scraped_proxies:
-        proxy = Proxy(ip=ip, port=int(port))
-        db.session.add(proxy)
+    # Store unique scraped proxies in the database
+    with app.app_context():
+        for ip, port in scraped_proxies:
+            if not Proxy.query.filter_by(ip=ip, port=int(port)).first():  # Avoid duplicates in DB
+                proxy = Proxy(ip=ip, port=int(port))
+                db.session.add(proxy)
 
-    db.session.commit()
-    return f'Successfully scraped {len(scraped_proxies)} proxies.'
+        db.session.commit()
 
+    return f"✅ Successfully scraped and saved {len(scraped_proxies)} proxies."
 
 @celery.task
 def test_proxies_task():
