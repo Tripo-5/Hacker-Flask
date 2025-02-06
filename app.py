@@ -1,51 +1,40 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from celery import Celery
+import requests
+import os
 
-# Import models here (but don't bind db yet)
-from models import db, User, Proxy
-from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
-
-db = SQLAlchemy()
-# Initialize Flask app
+# Initialize Flask App
 app = Flask(__name__)
 app.config.from_object('config')
 
-# Initialize extensions
-db.init_app(app)  # Now bind db to app
+# Database Setup
+db = SQLAlchemy()
+
+# Initialize Extensions
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-def create_app():
-    app = Flask(__name__)
-    app.config.from_object('config')
+# Initialize Database with the Flask App
+db.init_app(app)
 
-    db.init_app(app)
-
-    with app.app_context():
-        db.create_all()  # Ensure database is initialized
-
-    return app
+# Import Models AFTER db is initialized
+from models import User, Proxy
 
 # Celery Configuration
-def make_celery(app):
-    celery = Celery(app.import_name, broker=app.config.get('CELERY_BROKER_URL', 'redis://localhost:6379/0'))
-    celery.conf.update(app.config)
-    return celery
+celery = Celery(app.name, broker=app.config.get('CELERY_BROKER_URL', 'redis://localhost:6379/0'))
+celery.conf.update(app.config)
 
-celery = make_celery(app)
+# Ensure database is created on startup
+with app.app_context():
+    db.create_all()
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
-
-# Ensure Database is Created on Startup
-with app.app_context():
-    db.create_all()
+    return db.session.get(User, int(user_id))  # ✅ FIXED DEPRECATION WARNING
 
 # Route: User Registration
 @app.route('/register', methods=['GET', 'POST'])
@@ -54,7 +43,7 @@ def register():
         username = request.form['username']
         password = request.form['password']
         
-        if User.query.filter_by(username=username).first():
+        if db.session.query(User).filter_by(username=username).first():
             return "User already exists!"
 
         hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
@@ -71,7 +60,7 @@ def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-        user = User.query.filter_by(username=username).first()
+        user = db.session.query(User).filter_by(username=username).first()
         
         if user and bcrypt.check_password_hash(user.password, password):
             login_user(user)
@@ -85,7 +74,6 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-# Route: Dashboard
 @app.route('/')
 @login_required
 def dashboard():
@@ -96,18 +84,17 @@ def dashboard():
 def recon_management():
     return render_template('recon.html')
 
-# Lazy import Celery tasks to avoid circular imports
 @app.route('/scrape_proxies', methods=['POST'])
 @login_required
 def scrape_proxies():
-    from tasks import scrape_proxies_task
+    from tasks import scrape_proxies_task  # Lazy import
     scrape_proxies_task.delay()
     return jsonify({'message': 'Scraping started'})
 
 @app.route('/test_proxies', methods=['POST'])
 @login_required
 def test_proxies():
-    from tasks import test_proxies_task
+    from tasks import test_proxies_task  # Lazy import
     test_proxies_task.delay()
     return jsonify({'message': 'Testing started'})
 
@@ -115,16 +102,13 @@ def test_proxies():
 @login_required
 def get_proxies():
     proxies = Proxy.query.limit(30).all()
-    return jsonify([
-        {'ip': p.ip, 'port': p.port, 'connectivity': p.connectivity, 'response_time': p.response_time, 'location': p.location}
-        for p in proxies
-    ])
-
-# Database setup (for first-time use)
-def create_database():
-    with app.app_context():
-        db.create_all()
+    return jsonify([{
+        'ip': p.ip,
+        'port': p.port,
+        'connectivity': p.connectivity,
+        'response_time': p.response_time,
+        'location': p.location
+    } for p in proxies])
 
 if __name__ == '__main__':
-    create_database()  # Ensure DB is created
     app.run(host='0.0.0.0', port=5000, debug=True)
