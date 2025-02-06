@@ -7,6 +7,12 @@ import requests
 import time
 import random
 import os
+from flask import Flask
+
+
+db = SQLAlchemy()
+bcrypt = Bcrypt()
+login_manager = LoginManager()
 
 app = Flask(__name__)
 app.config.from_object('config')
@@ -22,6 +28,20 @@ login_manager.login_view = 'login'
 
 # Import models AFTER initializing db
 from models import User, Proxy
+
+def create_app():
+    """Flask Application Factory Pattern"""
+    app = Flask(__name__)
+    app.config.from_object('config')  # Ensure your config file has SQLALCHEMY_DATABASE_URI
+
+    db.init_app(app)
+    bcrypt.init_app(app)
+    login_manager.init_app(app)
+
+    with app.app_context():
+        db.create_all()
+
+    return app
 
 @login_manager.user_loader
 def load_user(user_id):
