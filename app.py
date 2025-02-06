@@ -95,4 +95,23 @@ def scrape_proxies():
 @login_required
 def test_proxies():
     from tasks import test_proxies_task
-    test_proxies_t
+    test_proxies_task.delay()
+    return jsonify({'message': 'Testing started'})
+
+@app.route('/get_proxies')
+@login_required
+def get_proxies():
+    proxies = Proxy.query.limit(30).all()
+    return jsonify([
+        {'ip': p.ip, 'port': p.port, 'connectivity': p.connectivity, 'response_time': p.response_time, 'location': p.location}
+        for p in proxies
+    ])
+
+# Database setup (for first-time use)
+def create_database():
+    with app.app_context():
+        db.create_all()
+
+if __name__ == '__main__':
+    create_database()  # Ensure DB is created
+    app.run(host='0.0.0.0', port=5000, debug=True)
