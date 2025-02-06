@@ -1,57 +1,36 @@
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from flask import Flask, render_template, request, redirect, url_for, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
 from celery import Celery
-import os
+from models import User, Proxy
 
-# Initialize Extensions
+# Initialize Flask extensions
 db = SQLAlchemy()
 bcrypt = Bcrypt()
 login_manager = LoginManager()
-login_manager.login_view = 'login'
 
 def create_app():
-    """Flask Application Factory Pattern"""
+    """ Application Factory for Flask """
     app = Flask(__name__)
-    app.config.from_object('config')  # Ensure 'config.py' exists with correct settings
+    app.config.from_object('config')
 
     db.init_app(app)
     bcrypt.init_app(app)
     login_manager.init_app(app)
 
     with app.app_context():
-        db.create_all()
+        db.create_all()  # Ensure tables exist
 
     return app
 
-# Create the Flask app
 app = create_app()
 
-# Initialize Celery
-def make_celery(app):
-    celery = Celery(
-        app.import_name,
-        backend=app.config['CELERY_RESULT_BACKEND'],
-        broker=app.config['CELERY_BROKER_URL']
-    )
-    celery.conf.update(app.config)
-
-    class ContextTask(celery.Task):
-        def __call__(self, *args, **kwargs):
-            with app.app_context():
-                return self.run(*args, **kwargs)
-
-    celery.Task = ContextTask
-    return celery
-
-celery = make_celery(app)
-
-# User Loader
 @login_manager.user_loader
 def load_user(user_id):
-    """Use session.get() instead of query.get() for SQLAlchemy 2.0+"""
-    return db.session.get(User, int(user_id))
+    """ Load user session """
+    with app.app_context():
+        return db.session.get(User, int(user_id))
 
 # Import models AFTER initializing db
 from models import User, Proxy
@@ -110,9 +89,11 @@ def recon_management():
 @app.route('/scrape_proxies', methods=['POST'])
 @login_required
 def scrape_proxies():
-    from tasks import scrape_proxies_task  
+    """ Start proxy scraping task """
+    from tasks import scrape_proxies_task  # Import inside route to avoid circular import
     scrape_proxies_task.delay()
     return jsonify({'message': 'Scraping started'})
+
 
 @app.route('/test_proxies', methods=['POST'])
 @login_required
