@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Reconnaissance Management</h2>
+<button onclick="scrapeProxies()">Scrape Proxies</button>
+<button onclick="testProxies()">Test Proxies</button>
+
+<table border="1">
+    <thead>
+        <tr>
+            <th>IP</th>
+            <th>Port</th>
+            <th>Connectivity</th>
+            <th>Response Time</th>
+            <th>Location</th>
+        </tr>
+    </thead>
+    <tbody id="proxyTable"></tbody>
+</table>
+
+<script>
+    function scrapeProxies() {
+        fetch("{{ url_for('scrape_proxies') }}", { method: "POST" })
+            .then(response => response.json())
+            .then(data => alert(data.message));
+    }
+
+    function testProxies() {
+        fetch("{{ url_for('test_proxies') }}", { method: "POST" })
+            .then(response => response.json())
+            .then(data => alert(data.message));
+    }
+
+    function loadProxies() {
+        fetch("{{ url_for('get_proxies') }}")
+            .then(response => response.json())
+            .then(data => {
+                let tableBody = document.getElementById("proxyTable");
+                tableBody.innerHTML = "";
+                data.forEach(proxy => {
+                    let row = `<tr>
+                        <td>${proxy.ip}</td>
+                        <td>${proxy.port}</td>
+                        <td>${proxy.connectivity}</td>
+                        <td>${proxy.response_time}</td>
+                        <td>${proxy.location}</td>
+                    </tr>`;
+                    tableBody.innerHTML += row;
+                });
+            });
+    }
+
+    window.onload = loadProxies;
+</script>
+{% endblock %}
