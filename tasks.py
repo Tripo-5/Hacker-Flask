@@ -1,18 +1,18 @@
 from celery import Celery
-from app import create_app, db  # Import the app factory
+from app import create_app, db  # Import the Flask factory function and database
 from models import Proxy
 import requests
 import re
 
-# Celery setup
-app = create_app()  # Create Flask App for Celery
-celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
-celery.conf.update(app.config)
+# Create Flask App and Initialize Celery
+flask_app = create_app()
+celery = Celery(flask_app.name, broker=flask_app.config['CELERY_BROKER_URL'])
+celery.conf.update(flask_app.config)
 
 @celery.task
 def scrape_proxies_task():
     """Scrapes proxy lists and adds them to the database."""
-    with app.app_context():  # FIX: Ensure Flask context in Celery task
+    with flask_app.app_context():  # FIX: Run Celery task inside Flask context
         proxy_sources = [
             "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies.txt",
             "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
@@ -20,7 +20,7 @@ def scrape_proxies_task():
             "https://spys.me/socks.txt"
         ]
         
-        stored_proxies = {(p.ip, str(p.port)) for p in Proxy.query.all()}  # Fetch existing proxies
+        stored_proxies = {(p.ip, str(p.port)) for p in db.session.query(Proxy).all()}  # Fetch existing proxies
 
         for url in proxy_sources:
             try:
@@ -36,6 +36,7 @@ def scrape_proxies_task():
 
         db.session.commit()
         return "Scraping Complete"
+
 
 @celery.task
 def test_proxies_task():
