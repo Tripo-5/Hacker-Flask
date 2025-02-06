@@ -1,25 +1,30 @@
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from flask import Flask, render_template, request, redirect, url_for, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
 from celery import Celery
 import requests
-import time
-import random
 
+# Initialize Flask App
 app = Flask(__name__)
 app.config.from_object('config')
 
-db = SQLAlchemy(app)
+# Initialize database
+db = SQLAlchemy(app)  # Initialize & bind immediately
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# Celery Configuration
-celery = Celery(app.name, broker=app.config.get('CELERY_BROKER_URL', 'redis://localhost:6379/0'))
-celery.conf.update(app.config)
-
+# Import models AFTER initializing db
 from models import User, Proxy
+
+# Celery Configuration
+def make_celery(app):
+    celery = Celery(app.import_name, broker=app.config.get('CELERY_BROKER_URL', 'redis://localhost:6379/0'))
+    celery.conf.update(app.config)
+    return celery
+
+celery = make_celery(app)
 
 @login_manager.user_loader
 def load_user(user_id):
@@ -61,7 +66,6 @@ def login():
     
     return render_template('login.html')
 
-
 @app.route('/logout')
 @login_required
 def logout():
@@ -79,32 +83,16 @@ def dashboard():
 def recon_management():
     return render_template('recon.html')
 
+# Lazy import Celery tasks to avoid circular imports
 @app.route('/scrape_proxies', methods=['POST'])
 @login_required
 def scrape_proxies():
-    from tasks import scrape_proxies_task  # Lazy import
+    from tasks import scrape_proxies_task
     scrape_proxies_task.delay()
     return jsonify({'message': 'Scraping started'})
 
 @app.route('/test_proxies', methods=['POST'])
 @login_required
 def test_proxies():
-    from tasks import test_proxies_task  # Lazy import
-    test_proxies_task.delay()
-    return jsonify({'message': 'Testing started'})
-
-
-@app.route('/get_proxies')
-@login_required
-def get_proxies():
-    proxies = Proxy.query.limit(30).all()
-    return jsonify([{'ip': p.ip, 'port': p.port, 'connectivity': p.connectivity, 'response_time': p.response_time, 'location': p.location} for p in proxies])
-
-# Database setup (for first-time use)
-def create_database():
-    with app.app_context():
-        db.create_all()
-
-if __name__ == '__main__':
-    create_database()  # Ensure DB is created
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    from tasks import test_proxies_task
+    test_proxies_t
