@@ -1,121 +1,73 @@
 from celery import Celery
-from models import Proxy  # Import only the necessary models
-from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
-from config import CELERY_BROKER_URL
-
-celery = Celery(__name__, broker=CELERY_BROKER_URL)
-
 import requests
-import random
+import re
 import os
-from app import db  # Lazy import to avoid circular dependency
+from app import db
+from models import Proxy
+
+# Initialize Celery
+celery = Celery('tasks', broker='redis://localhost:6379/0')
+
+# Path to the proxy sources file
+PROXY_SOURCES_FILE = os.path.join(os.path.dirname(__file__), 'proxy_sources.txt')
+
+# Function to load proxy sources from a file
+def load_proxy_sources():
+    """Loads proxy source URLs from the proxy_sources.txt file."""
+    if not os.path.exists(PROXY_SOURCES_FILE):
+        return []
+    with open(PROXY_SOURCES_FILE, 'r') as f:
+        return [line.strip() for line in f.readlines() if line.strip()]
+
+# Function to fetch proxies from a URL
+def fetch_proxies(url):
+    """Fetches proxies from a given URL, extracting valid IP:PORT pairs."""
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()  # Raise an error for failed requests
+        proxies = re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}:\d+\b', response.text)  # Extract IP:PORT format
+        return proxies
+    except requests.RequestException:
+        return []
 
 @celery.task
 def scrape_proxies_task():
-    """
-    Scrapes proxies from a list of URLs in 'proxy_sources.txt',
-    extracts valid IP:PORT proxies, and stores them in the database.
-    """
-    file_path = os.path.join(os.path.dirname(__file__), 'proxy_sources.txt')
+    """Scrapes proxies from predefined sources and stores them in the database."""
+    proxy_sources = load_proxy_sources()  # Load sources dynamically
+    scraped_proxies = set()  # Use a set to avoid duplicates
 
-    # Check if file exists
-    if not os.path.exists(file_path):
-        print("❌ Error: 'proxy_sources.txt' not found.")
-        return "Error: 'proxy_sources.txt' not found."
+    for url in proxy_sources:
+        proxies = fetch_proxies(url)
+        scraped_proxies.update(proxies)
 
-    # Read URLs from file
-    try:
-        with open(file_path, 'r') as file:
-            urls = [line.strip() for line in file.readlines() if line.strip()]
-    except Exception as e:
-        print(f"❌ Error reading 'proxy_sources.txt': {e}")
-        return f"Error reading 'proxy_sources.txt': {str(e)}"
+    with db.session.begin():  # Ensure session is handled correctly
+        for proxy in scraped_proxies:
+            ip, port = proxy.split(':')
+            if not Proxy.query.filter_by(ip=ip, port=int(port)).first():  # Avoid duplicate entries
+                new_proxy = Proxy(ip=ip, port=int(port))
+                db.session.add(new_proxy)
 
-    if not urls:
-        print("❌ No URLs found in 'proxy_sources.txt'.")
-        return "Error: No URLs found in 'proxy_sources.txt'."
+    return f'Scraped {len(scraped_proxies)} proxies and added to database.'
 
-    # Regular expression to match valid IP:PORT format
-    proxy_regex = re.compile(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{2,5})")
-
-    scraped_proxies = set()  # Store unique proxies
-
-    for url in urls:
-        print(f"🔍 Fetching from {url}...")
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                if "text/html" in response.headers["Content-Type"]:
-                    # If the response is HTML, use BeautifulSoup to extract IPs
-                    soup = BeautifulSoup(response.text, "html.parser")
-                    text_content = soup.get_text()
-                    matches = proxy_regex.findall(text_content)
-                else:
-                    # Otherwise, parse the response as plain text
-                    matches = proxy_regex.findall(response.text)
-
-                for match in matches:
-                    scraped_proxies.add(match)
-                print(f"✅ Found {len(matches)} proxies from {url}")
-            else:
-                print(f"⚠️ Skipping {url}: Status {response.status_code}")
-        except Exception as e:
-            print(f"⚠️ Failed to fetch {url}: {e}")
-
-    # If no proxies found, log it
-    if not scraped_proxies:
-        print("❌ No valid proxies found from any source.")
-        return "No valid proxies found."
-
-    # Store scraped proxies in database
-    app = create_app()  # Ensure correct app context
-    with app.app_context():
-        for ip, port in scraped_proxies:
-            if not Proxy.query.filter_by(ip=ip, port=int(port)).first():  # Avoid duplicates
-                proxy = Proxy(ip=ip, port=int(port))
-                db.session.add(proxy)
-
-        db.session.commit()
-
-    print(f"✅ Successfully scraped and saved {len(scraped_proxies)} proxies.")
-    return f"Successfully scraped and saved {len(scraped_proxies)} proxies."
-🔹 Fix: Ensure Flask App Context is Initialized
-In app.py, ensure you have an app factory function:
-
-python
-Copy
-Edit
-from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
-
-db = SQLAlchemy()
-
-def create_app():
-    app = Flask(__name__)
-    app.config.from_object('config')
-
-    db.init_app(app)
-
-    with app.app_context():
-        db.create_all()  # Ensure database is initialized
-
-    return app
 @celery.task
 def test_proxies_task():
-    import requests
-    import time
-    from app import db  # Lazy import to avoid circular dependency
-
+    """Tests the scraped proxies to determine their connectivity and response time."""
     proxies = Proxy.query.all()
-    for proxy in proxies:
-        start = time.time()
-        try:
-            response = requests.get('http://8.8.8.8', proxies={"http": f"{proxy.ip}:{proxy.port}"}, timeout=5)
-            proxy.connectivity = 'Yes' if response.status_code == 200 else 'No'
-        except:
-            proxy.connectivity = 'No'
+    valid_proxies = []
 
-        proxy.response_time = round(time.time() - start, 2)
-        db.session.commit()
+    for proxy in proxies:
+        proxy_url = f'socks5://{proxy.ip}:{proxy.port}'
+        try:
+            response = requests.get('https://www.google.com', proxies={'http': proxy_url, 'https': proxy_url}, timeout=5)
+            if response.status_code == 200:
+                proxy.connectivity = 'Working'
+                proxy.response_time = response.elapsed.total_seconds()
+                valid_proxies.append(proxy)
+        except requests.RequestException:
+            proxy.connectivity = 'Dead'
+
+    with db.session.begin():  # Update the database in bulk
+        db.session.bulk_save_objects(valid_proxies)
+
+    return f'Tested {len(proxies)} proxies. {len(valid_proxies)} are working.'
 
