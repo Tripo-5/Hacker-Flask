@@ -9,19 +9,27 @@ import random
 
 # Initialize Flask app
 app = Flask(__name__)
+
+# Load Configuration
 app.config.from_object('config')
 
-# Initialize extensions
-db = SQLAlchemy(app)
+# Initialize Extensions (Avoiding Circular Import Issues)
+db = SQLAlchemy()  # Don't pass `app` yet to avoid circular import
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 # Celery Configuration
-celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
+celery = Celery(app.name, broker=app.config.get('CELERY_BROKER_URL', 'redis://localhost:6379/0'))
 celery.conf.update(app.config)
 
-from models import User, Proxy
+# Import Models AFTER `db` is initialized
+from models import User, Proxy  # Make sure models.py is structured correctly
+
+# Now, bind db to the app
+db.init_app(app)
+
+# Import Celery tasks AFTER Celery is initialized
 from tasks import scrape_proxies_task, test_proxies_task
 
 @login_manager.user_loader
@@ -78,5 +86,11 @@ def get_proxies():
     proxies = Proxy.query.limit(30).all()
     return jsonify([{'ip': p.ip, 'port': p.port, 'connectivity': p.connectivity, 'response_time': p.response_time, 'location': p.location} for p in proxies])
 
+# Database setup (for first-time use)
+def create_database():
+    with app.app_context():
+        db.create_all()
+
 if __name__ == '__main__':
+    create_database()  # Ensure DB is created
     app.run(debug=True)
