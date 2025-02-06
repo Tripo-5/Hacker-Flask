@@ -1,51 +1,49 @@
 from celery import Celery
-from app import app, db
+from flask import Flask
+from app import create_app, db
 from models import Proxy
 import requests
 import re
-import time
 
-celery = Celery(
-    'tasks',
-    broker=app.config['CELERY_BROKER_URL'],
-    backend=app.config['CELERY_RESULT_BACKEND']
-)
-
-PROXY_SOURCES = [
-    "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies.txt",
-    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
-    "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt"
-]
+# Initialize Flask app inside Celery
+flask_app = create_app()
+celery = Celery(flask_app.name, broker=flask_app.config['CELERY_BROKER_URL'])
+celery.conf.update(flask_app.config)
 
 @celery.task
 def scrape_proxies_task():
-    """Scrape proxies from external sources and store valid ones in the database."""
-    valid_proxies = set()
-    ip_port_regex = re.compile(r'(\d+\.\d+\.\d+\.\d+):(\d+)')
+    """ Scrape proxies from online sources and store in the database """
+    with flask_app.app_context():  # Ensure Celery has the Flask context
+        proxy_sources = [
+            "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies.txt",
+            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
+            "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt"
+        ]
+        
+        # Fetch already stored proxies to avoid duplicates
+        stored_proxies = {(p.ip, str(p.port)) for p in db.session.query(Proxy).all()}
+        
+        new_proxies = []
+        for url in proxy_sources:
+            try:
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                proxies = re.findall(r"(\d+\.\d+\.\d+\.\d+):(\d+)", response.text)  # Extract IP:Port
 
-    for url in PROXY_SOURCES:
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                for line in response.text.splitlines():
-                    match = ip_port_regex.match(line)
-                    if match:
-                        ip, port = match.groups()
-                        valid_proxies.add((ip, port))
-        except Exception as e:
-            print(f"Error fetching {url}: {e}")
+                for ip, port in proxies:
+                    if (ip, port) not in stored_proxies:
+                        new_proxies.append(Proxy(ip=ip, port=int(port)))
+                        stored_proxies.add((ip, port))  # Add to avoid duplicates
+            except requests.RequestException as e:
+                print(f"Error fetching proxies from {url}: {e}")
 
-    with app.app_context():
-        stored_proxies = {(p.ip, str(p.port)) for p in Proxy.query.all()}  
-        new_proxies = valid_proxies - stored_proxies 
+        # Insert new proxies into database
+        if new_proxies:
+            db.session.bulk_save_objects(new_proxies)
+            db.session.commit()
 
-        for ip, port in new_proxies:
-            new_proxy = Proxy(ip=ip, port=int(port))
-            db.session.add(new_proxy)
+        return f"Scraped and added {len(new_proxies)} new proxies."
 
-        db.session.commit()
-
-    return f"Scraped {len(new_proxies)} new proxies."
 
 @celery.task
 def test_proxies_task():
