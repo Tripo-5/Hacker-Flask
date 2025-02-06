@@ -1,8 +1,8 @@
 import os
 
 # Database credentials (default values, change as needed)
-DB_USER = "root"
-DB_PASSWORD = "rootpassword"
+DB_USER = "pentest_user"
+DB_PASSWORD = "pentestpassword"
 DB_HOST = "localhost"
 DB_NAME = "pentest_db"
 
