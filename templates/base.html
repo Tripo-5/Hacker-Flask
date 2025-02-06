@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pentest Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <nav>
+        <a href="{{ url_for('dashboard') }}">Dashboard</a>
+        <a href="{{ url_for('recon_management') }}">Reconnaissance</a>
+        <a href="#">Bruteforcing</a>
+        <a href="#">Port Scanning</a>
+        <a href="{{ url_for('logout') }}">Logout</a>
+    </nav>
+    <div class="content">{% block content %}{% endblock %}</div>
+</body>
+</html>
